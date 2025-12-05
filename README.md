@@ -1,47 +1,86 @@
 # Satellite Digital Twin
 
-A stateful digital twin simulation of a satellite in a 500km Sun-Synchronous Orbit (SSO).
+A high-fidelity simulation framework for spacecraft power and data management in low Earth orbit. Designed for mission planning, power budget analysis, and operational constraint verification.
 
-## Features
+## Mission Profile
 
-- **Electrical Power System (EPS)**: 60W solar panels, 100Wh battery with charge/discharge management
-- **Orbital Mechanics**: Accurate sun/eclipse cycle modeling for SSO
-- **Data System**: Data generation, onboard storage, and manual downlink control
-- **Policy Engine**: Customizable operation policies (basic, power-save, high-performance)
-- **Visualization**: Static (matplotlib) and interactive (plotly) plots
-- **Web Dashboard**: Streamlit-based interactive dashboard
+- **Orbit**: 500 km Sun-Synchronous Orbit (SSO)
+- **Period**: 95 minutes
+- **Sunlight**: 60 minutes per orbit
+- **Eclipse**: 35 minutes per orbit
 
-## Quick Start
+## Reference Specification
 
-### Installation
+This implementation adheres to the `loads.md` specification:
+
+### Power Budget
+
+| Mode | Power | Duration | Constraint |
+|------|-------|----------|------------|
+| Platform Base | 15 W | Continuous | Always on |
+| Payload Imaging | +40 W | 10 min/orbit | Sunlight only |
+| Downlink | +30 W | 8 min/orbit | 50% sun/50% eclipse |
+| ADCS Momentum Dump | +10 W | 5 min/orbit | Sunlight only |
+
+### Operational Power Modes
+
+| Mode | Total Power |
+|------|-------------|
+| Base Only | 15 W |
+| Base + Imaging | 55 W |
+| Base + Downlink | 45 W |
+| Base + ADCS Dump | 25 W |
+| Peak (Imaging + ADCS) | 65 W |
+
+### Data Budget
+
+| Parameter | Value |
+|-----------|-------|
+| Data Generation | 2 Gbit per orbit |
+| Imaging Duration | 10 minutes per orbit |
+| Generation Rate | 0.025 GB/min |
+| Downlink Rate | 50 Mbps |
+| Downlink Duration | 8 minutes per orbit |
+| Downlink Capacity | 3 GB per pass |
+
+### Critical Constraint
+
+**Battery State of Charge shall NEVER drop below 20% during nominal operations.**
+
+## Installation
 
 ```bash
-# Clone the repository
 cd galaxeye2
-
-# Install dependencies
 pip install -e .
+```
 
-# Or install dependencies directly
+Or install dependencies directly:
+
+```bash
 pip install numpy pandas matplotlib plotly streamlit
 ```
 
-### Run Example Simulation
+## Usage
+
+### Command Line Interface
 
 ```bash
-# Run with default parameters (5 orbits, basic policy)
+# Run simulation (default: 5 orbits)
 python main.py
 
-# Run for 10 orbits
+# Run for specific duration
 python main.py --orbits 10
 
-# Use power-save policy
+# Use specific operations policy
 python main.py --policy power_save
 
-# Export results
-python main.py --export ./results
+# Export telemetry data
+python main.py --export ./output
 
-# Launch web dashboard
+# Display specification
+python main.py --compliance
+
+# Launch web interface
 python main.py --dashboard
 ```
 
@@ -50,138 +89,192 @@ python main.py --dashboard
 ```python
 from satellite.state import SatelliteState, SatelliteConfig
 from simulation.engine import Simulation
-from simulation.policy import BasicPolicy
+from simulation.policy import LoadsMDCompliantPolicy
 
-# Create configuration
+# Configure spacecraft
 config = SatelliteConfig(
     orbit_period_min=95.0,
     sunlight_duration_min=60.0,
     solar_panel_power_w=60.0,
     battery_capacity_wh=100.0,
-    min_soc_percent=20.0,
-    max_soc_percent=80.0,
-    imaging_windows_theta=[[23, 28], [45, 50]],
+    base_load_w=15.0,
+    imaging_load_w=40.0,
+    downlink_load_w=30.0,
+    imaging_duration_min=10.0,
+    downlink_duration_min=8.0,
+    data_per_orbit_gbit=2.0,
+    downlink_speed_mbps=50.0,
     timestep_min=1.0
 )
 
 # Initial state
 initial_state = SatelliteState(
-    battery_level_percent=82.0,
-    battery_voltage_v=12.5,
-    total_load_w=23.0
+    battery_level_percent=80.0,
+    battery_energy_wh=80.0
 )
 
-# Run simulation
-sim = Simulation(config, initial_state, BasicPolicy())
-history = sim.run(duration_orbits=5)
+# Execute simulation
+sim = Simulation(config, initial_state, LoadsMDCompliantPolicy())
+history = sim.run(duration_orbits=10)
 
-# Get results
+# Verify compliance
 summary = sim.get_summary()
-print(f"Battery: {summary['battery']['min']:.1f}% - {summary['battery']['max']:.1f}%")
+print(f"Min SoC: {summary['compliance']['min_soc_reached']:.1f}%")
+print(f"Compliant: {summary['compliance']['compliant']}")
 ```
 
 ## Configuration Parameters
 
 ### Orbit Parameters
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `orbit_period_min` | 95.0 | Orbital period in minutes |
-| `sunlight_duration_min` | 60.0 | Time in sunlight per orbit |
-| `eclipse_duration_min` | 35.0 | Time in eclipse per orbit |
-| `orbit_altitude_km` | 500.0 | Orbit altitude |
 
-### EPS Parameters
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `solar_panel_power_w` | 60.0 | Solar panel output power |
-| `battery_capacity_wh` | 100.0 | Battery capacity |
-| `min_soc_percent` | 20.0 | Minimum state of charge |
-| `max_soc_percent` | 80.0 | Maximum state of charge |
+| `orbit_period_min` | 95.0 | Orbital period [minutes] |
+| `sunlight_duration_min` | 60.0 | Sunlight duration per orbit [minutes] |
+| `eclipse_duration_min` | 35.0 | Eclipse duration per orbit [minutes] |
+| `orbit_altitude_km` | 500.0 | Orbit altitude [km] |
+
+### Electrical Power System
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `solar_panel_power_w` | 60.0 | Solar array output [W] |
+| `battery_capacity_wh` | 100.0 | Battery capacity [Wh] |
+| `min_soc_percent` | 20.0 | Minimum SoC [%] (CONSTRAINT) |
 | `charge_efficiency` | 0.95 | Battery charge efficiency |
 | `discharge_efficiency` | 0.95 | Battery discharge efficiency |
 
-### Data System Parameters
+### Power Budget (loads.md)
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `max_data_storage_gb` | 100.0 | Maximum onboard storage |
-| `downlink_speed_gbps` | 1.0 | Downlink data rate |
-| `uplink_speed_gbps` | 0.1 | Uplink data rate |
-| `imaging_windows_theta` | [[23,28],[45,50]] | Imaging window angles |
+| `base_load_w` | 15.0 | Platform base load [W] |
+| `imaging_load_w` | 40.0 | Imaging payload load [W] |
+| `downlink_load_w` | 30.0 | Downlink load [W] |
+| `adcs_dump_load_w` | 10.0 | ADCS dump load [W] |
+
+### Operations Timing (loads.md)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `imaging_duration_min` | 10.0 | Imaging time per orbit [min] |
+| `downlink_duration_min` | 8.0 | Downlink time per orbit [min] |
+| `adcs_dump_duration_min` | 5.0 | ADCS dump time per orbit [min] |
+
+### Data Budget (loads.md)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `data_per_orbit_gbit` | 2.0 | Data generation [Gbit/orbit] |
+| `downlink_speed_mbps` | 50.0 | Downlink rate [Mbps] |
+| `max_data_storage_gb` | 100.0 | Onboard storage capacity [GB] |
 
 ## State Variables
 
-### Core State
-- `simulation_time_s` - Total simulation time
-- `orbit_number` - Current orbit count
-- `orbit_angle_deg` - Position in orbit (0-360°)
+### Electrical Power System
 
-### EPS State
-- `battery_level_percent` - Battery state of charge (%)
-- `battery_voltage_v` - Battery voltage
-- `solar_generation_w` - Current solar power
-- `net_power_w` - Net power (generation - load)
-- `in_sunlight` - Sunlight/eclipse status
+- `battery_level_percent` - Battery state of charge [%]
+- `battery_voltage_v` - Bus voltage [V]
+- `solar_generation_w` - Solar array output [W]
+- `net_power_w` - Net power (generation - load) [W]
+- `in_sunlight` - Illumination status
 
 ### Load State
-- `total_load_w` - Total power consumption
-- `base_load_w` - Essential system load
-- `payload_load_w` - Payload power consumption
-- `heater_load_w` - Thermal management load
-- `comms_load_w` - Communication load
 
-### Data State
-- `onboard_data_volume_gb` - Stored data volume
-- `is_imaging` - Imaging active status
-- `is_downlinking` - Downlink active status
+- `total_load_w` - Total power consumption [W]
+- `base_load_w` - Platform base load [W]
+- `payload_load_w` - Imaging payload load [W]
+- `comms_load_w` - Communication load [W]
+- `adcs_dump_load_w` - ADCS dump load [W]
 
-## Policies
+### Operations Mode
+
+- `is_imaging` - Payload imaging active
+- `is_downlinking` - Downlink active
+- `is_adcs_dumping` - ADCS dump active
+
+### Data System
+
+- `onboard_data_volume_gb` - Stored data [GB]
+- `data_generated_gb` - Total generated [GB]
+- `data_downlinked_gb` - Total downlinked [GB]
+
+## Operations Policies
+
+### LoadsMDCompliantPolicy
+
+Strict adherence to loads.md specification with automatic load shedding to maintain 20% SoC constraint.
 
 ### BasicPolicy
-Simple threshold-based rules:
-- Reduces load when battery below 30%
-- Enables imaging in designated windows
-- Triggers downlink when storage > 70%
+
+Threshold-based operations with configurable battery limits.
 
 ### PowerSavePolicy
-Conservative power management:
-- Minimal operations during eclipse
-- Prioritizes battery charging
-- Higher battery thresholds for operations
+
+Conservative power management prioritizing battery conservation.
 
 ### HighPerformancePolicy
-Maximizes data collection:
-- Aggressive imaging schedule
-- Lower battery margins
-- Continuous downlink when possible
+
+Aggressive operations maximizing data collection while respecting constraints.
 
 ### CustomizablePolicy
-User-configurable thresholds:
-```python
-policy = CustomizablePolicy(
-    min_battery_imaging=40.0,
-    min_battery_downlink=30.0,
-    storage_downlink_trigger=60.0,
-    eclipse_load_reduction=0.5,
-    safe_mode_threshold=25.0
-)
+
+User-configurable thresholds for all operational parameters.
+
+## Project Structure
+
 ```
+galaxeye2/
+├── satellite/              # Spacecraft subsystem models
+│   ├── state.py            # State and configuration
+│   ├── eps.py              # Electrical Power System
+│   ├── orbit.py            # Orbital mechanics
+│   ├── data_system.py      # Data management
+│   └── loads.py            # Load management
+├── simulation/             # Simulation framework
+│   ├── engine.py           # Simulation engine
+│   └── policy.py           # Operations policies
+├── output/                 # Output and visualization
+│   ├── timeseries.py       # Data export
+│   ├── visualization.py    # Plotting
+│   └── dashboard.py        # Web interface
+├── main.py                 # CLI entry point
+├── test_compliance.py      # Compliance verification
+├── loads.md                # Reference specification
+└── pyproject.toml          # Dependencies
+```
+
+## Compliance Verification
+
+```bash
+python test_compliance.py
+```
+
+Verifies:
+- Power budget adherence
+- Data budget adherence
+- 20% SoC constraint maintenance
+- Eclipse survival capability
 
 ## Output Formats
 
 ### CSV Export
+
 ```python
 from output.timeseries import TimeSeriesExporter
 
 exporter = TimeSeriesExporter(history)
-exporter.to_csv("results.csv")
+exporter.to_csv("telemetry.csv")
 ```
 
 ### JSON Export
+
 ```python
-exporter.to_json("results.json", include_metadata=True)
+exporter.to_json("telemetry.json")
 ```
 
-### Plots
+### Visualization
+
 ```python
 from output.visualization import Visualizer
 
@@ -189,36 +282,6 @@ viz = Visualizer(history)
 viz.plot_overview()
 viz.plot_battery_detail()
 viz.plot_power_breakdown()
-```
-
-### Interactive Dashboard
-```bash
-python main.py --dashboard
-# Or directly:
-streamlit run output/dashboard.py
-```
-
-## Project Structure
-
-```
-galaxeye2/
-├── satellite/           # Satellite subsystem models
-│   ├── state.py         # State and config dataclasses
-│   ├── eps.py           # Electrical Power System
-│   ├── orbit.py         # Orbital mechanics
-│   ├── data_system.py   # Data management
-│   └── loads.py         # Load definitions
-├── simulation/          # Simulation engine
-│   ├── engine.py        # Main simulation loop
-│   └── policy.py        # Policy definitions
-├── output/              # Output and visualization
-│   ├── timeseries.py    # CSV/JSON export
-│   ├── visualization.py # Matplotlib/Plotly plots
-│   └── dashboard.py     # Streamlit dashboard
-├── examples/            # Example scripts
-│   └── basic_simulation.py
-├── main.py              # CLI entry point
-└── pyproject.toml       # Dependencies
 ```
 
 ## Requirements
@@ -233,8 +296,3 @@ galaxeye2/
 ## License
 
 MIT License
-
-
-
-
-
