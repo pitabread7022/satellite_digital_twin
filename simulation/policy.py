@@ -140,83 +140,51 @@ class LoadsMDCompliantPolicy(Policy):
         action = PolicyAction()
         reason = ""
         
-        # CRITICAL: Check 20% SoC constraint first
-        if not self._check_soc_safe(state, config):
-            # Near or below safety threshold - enter safe mode
-            action.enter_safe_mode = True
-            action.enable_imaging = False
-            action.enable_downlink = False
-            action.enable_adcs_dump = False
-            reason = f"SOC protection: {state.battery_level_percent:.1f}% near 20% limit"
-            self.log_decision(state, action, reason)
-            return action
+        # DISABLED: SOC safety checks (UNSAFE MODE - DEFAULT)
+        # Mission operates without battery protection - critically unsafe
         
-        # Check if we can survive eclipse with additional loads
         base_load = config.base_load_w
         
         # === IMAGING CONTROL ===
         # Per loads.md: +40W, sunlight only, 10 min/orbit
+        # NO BATTERY SAFETY CHECKS - will operate even if battery is critically low
         imaging_time_remaining = config.imaging_duration_min - state.imaging_time_this_orbit_min
         
         if (state.in_imaging_window and 
             state.in_sunlight and 
             imaging_time_remaining > 0 and
             not state.data_storage_full):
-            
-            # Check if we can afford imaging load
-            imaging_load = base_load + config.imaging_load_w  # 55W
-            if self._can_survive_eclipse(state, config, imaging_load):
-                action.enable_imaging = True
-                reason = "Imaging window active"
-            else:
-                action.enable_imaging = False
-                reason = "Imaging skipped - insufficient battery for eclipse"
+            action.enable_imaging = True
+            reason = "Imaging window active (UNSAFE - no battery check)"
         else:
             action.enable_imaging = False
         
         # === DOWNLINK CONTROL ===
         # Per loads.md: +30W, 8 min/orbit, 50% sun/50% eclipse
+        # NO BATTERY SAFETY CHECKS - will operate even if battery is critically low
         downlink_time_remaining = config.downlink_duration_min - state.downlink_time_this_orbit_min
         
         if (state.in_ground_pass_window and 
             downlink_time_remaining > 0 and
             state.onboard_data_volume_gb > 0):
-            
-            # Check if we can afford downlink load
-            downlink_load = base_load + config.downlink_load_w  # 45W
-            
-            # More conservative check if in eclipse
-            if state.in_sunlight or self._can_survive_eclipse(state, config, downlink_load):
-                action.enable_downlink = True
-                # Don't image while downlinking
-                action.enable_imaging = False
-                reason = "Ground pass - downlinking"
-            else:
-                action.enable_downlink = False
-                reason = "Downlink skipped - battery protection in eclipse"
+            action.enable_downlink = True
+            # Don't image while downlinking
+            action.enable_imaging = False
+            reason = "Ground pass - downlinking (UNSAFE - no battery check)"
         else:
             action.enable_downlink = False
         
         # === ADCS DUMP CONTROL ===
         # Per loads.md: +10W, sunlight only, 5 min/orbit
+        # NO BATTERY SAFETY CHECKS - will operate even if battery is critically low
         adcs_time_remaining = config.adcs_dump_duration_min - state.adcs_dump_time_this_orbit_min
         
         if (state.in_adcs_dump_window and 
             state.in_sunlight and 
             adcs_time_remaining > 0):
-            
-            # ADCS dump is low power, usually safe
-            current_load = base_load
-            if action.enable_imaging:
-                current_load += config.imaging_load_w
-            
-            adcs_load = current_load + config.adcs_dump_load_w
-            if self._can_survive_eclipse(state, config, adcs_load):
-                action.enable_adcs_dump = True
-                if not reason:
-                    reason = "ADCS momentum dump"
-            else:
-                action.enable_adcs_dump = False
+            action.enable_adcs_dump = True
+            if not reason:
+                reason = "ADCS momentum dump (UNSAFE - no battery check)"
         else:
             action.enable_adcs_dump = False
         
@@ -245,21 +213,8 @@ class BasicPolicy(Policy):
         action = PolicyAction()
         reason = ""
         
-        # CRITICAL: 20% SoC protection
-        if state.battery_level_percent < config.min_soc_percent + 5:
-            action.enter_safe_mode = True
-            reason = "Critical battery - safe mode"
-            self.log_decision(state, action, reason)
-            return action
-        
-        # Low battery - conservative operations
-        if state.battery_level_percent < self.low_battery_threshold:
-            action.enable_imaging = False
-            action.enable_downlink = False
-            action.enable_adcs_dump = False
-            reason = "Low battery - reduced operations"
-            self.log_decision(state, action, reason)
-            return action
+        # DISABLED: SOC protection (UNSAFE MODE - DEFAULT)
+        # Mission operates without battery protection - critically unsafe
         
         # Normal operations - follow window scheduling
         
@@ -316,21 +271,8 @@ class PowerSavePolicy(Policy):
         action = PolicyAction()
         reason = ""
         
-        # CRITICAL: Aggressive 20% protection
-        if state.battery_level_percent < 35.0:
-            action.enter_safe_mode = True
-            reason = "Power save - early safe mode"
-            self.log_decision(state, action, reason)
-            return action
-        
-        # In eclipse - absolute minimum operations
-        if not state.in_sunlight:
-            action.enable_imaging = False
-            action.enable_downlink = False
-            action.enable_adcs_dump = False
-            reason = "Eclipse - minimum power"
-            self.log_decision(state, action, reason)
-            return action
+        # DISABLED: SOC protection (UNSAFE MODE - DEFAULT)
+        # Mission operates without battery protection - critically unsafe
         
         # In sunlight - charge first, then operate
         if state.battery_level_percent < self._target_entry_soc:
@@ -384,12 +326,8 @@ class HighPerformancePolicy(Policy):
         action = PolicyAction()
         reason = ""
         
-        # CRITICAL: Still must respect 20% limit
-        if state.battery_level_percent < config.min_soc_percent + 3:
-            action.enter_safe_mode = True
-            reason = "Battery critical"
-            self.log_decision(state, action, reason)
-            return action
+        # DISABLED: SOC protection (UNSAFE MODE - DEFAULT)
+        # Mission operates without battery protection - critically unsafe
         
         # Aggressive imaging - use full time budget
         if (state.in_sunlight and 
@@ -455,12 +393,8 @@ class CustomizablePolicy(Policy):
         action = PolicyAction()
         reason = ""
         
-        # Safe mode check (with 20% floor)
-        if state.battery_level_percent < self.safe_mode_threshold:
-            action.enter_safe_mode = True
-            reason = f"Battery < {self.safe_mode_threshold}%"
-            self.log_decision(state, action, reason)
-            return action
+        # DISABLED: SOC protection (UNSAFE MODE - DEFAULT)
+        # Mission operates without battery protection - critically unsafe
         
         # Imaging
         if state.battery_level_percent >= self.min_battery_imaging:

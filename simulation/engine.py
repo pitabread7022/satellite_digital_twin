@@ -91,10 +91,26 @@ class Simulation:
     
     def _initialize_state(self) -> None:
         """Initialize state with proper calculations."""
-        # Calculate initial battery energy from SOC
+        # Calculate initial battery energy from SOC (using effective capacity)
+        effective_capacity = self.config.battery_capacity_wh * (self.state.battery_health_percent / 100.0)
         self.state.battery_energy_wh = (
-            self.state.battery_level_percent / 100.0 * self.config.battery_capacity_wh
+            self.state.battery_level_percent / 100.0 * effective_capacity
         )
+        
+        # Initialize battery voltage based on SOC and health
+        # Use EPS voltage calculation method
+        soc_normalized = self.state.battery_level_percent / 100.0
+        if soc_normalized < 0.2:
+            voltage_factor = 0.3 + 0.7 * (soc_normalized / 0.2)
+        elif soc_normalized < 0.8:
+            voltage_factor = 1.0 + 0.1 * ((soc_normalized - 0.2) / 0.6)
+        else:
+            voltage_factor = 1.1 + 0.1 * ((soc_normalized - 0.8) / 0.2)
+        
+        health_factor = self.state.battery_health_percent / 100.0
+        min_voltage = 9.0 + (1.0 - health_factor) * 0.5
+        max_voltage = 12.6 * health_factor
+        self.state.battery_voltage_v = min_voltage + (max_voltage - min_voltage) * voltage_factor
         
         # Set base load
         self.state.base_load_w = self.config.base_load_w
@@ -249,18 +265,23 @@ class Simulation:
                 self.load_manager.deactivate_load("ADCS_Dump")
     
     def _check_soc_compliance(self) -> None:
-        """Check and track 20% SoC compliance."""
+        """
+        Track 20% SoC violations (UNSAFE MODE - no enforcement).
+        
+        In unsafe mode, violations are tracked but not prevented.
+        Mission continues operating even when battery is critically low.
+        """
         # Track minimum SOC reached
         if self.state.battery_level_percent < self.min_soc_reached:
             self.min_soc_reached = self.state.battery_level_percent
         
-        # Check for violation
+        # Track violations but don't prevent operations
         if self.state.battery_level_percent < self.config.min_soc_percent:
             self.state.soc_violation = True
             self.soc_violations += 1
             self._log_event(
                 "SOC_VIOLATION",
-                f"CRITICAL: Battery dropped to {self.state.battery_level_percent:.1f}% (below 20% limit)",
+                f"CRITICAL UNSAFE: Battery dropped to {self.state.battery_level_percent:.1f}% (below 20% limit) - OPERATIONS CONTINUE",
                 include_state=True
             )
     

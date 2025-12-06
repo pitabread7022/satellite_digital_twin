@@ -64,7 +64,21 @@ def create_dashboard():
     """, unsafe_allow_html=True)
     
     st.title("SATELLITE DIGITAL TWIN")
-    st.markdown("**Mission Profile: 500km Sun-Synchronous Orbit | loads.md Compliant**")
+    
+    # CRITICAL UNSAFE MODE WARNING
+    st.error("""
+    **CRITICALLY UNSAFE MODE - DEFAULT OPERATION**
+    
+    **ALL FAILSAFES DISABLED:**
+    - No load shedding protection
+    - No battery safety checks
+    - No SOC compliance enforcement
+    - Operations continue even when battery is critically low
+    
+    **Mission will operate until battery depletion. Use at your own risk.**
+    """)
+    
+    st.markdown("**Mission Profile: 500km Sun-Synchronous Orbit | UNSAFE MODE - No Protection**")
     
     # Session state
     if 'simulation' not in st.session_state:
@@ -85,7 +99,7 @@ def create_dashboard():
         
         # EPS
         with st.expander("Electrical Power System", expanded=True):
-            solar_power = st.slider("Solar Array Power [W]", 40, 100, 60)
+            solar_power = st.slider("Solar Array Power [W]", 0, 100, 60)
             battery_capacity = st.slider("Battery Capacity [Wh]", 50, 200, 100)
             st.text("Min SoC: 20% [CONSTRAINT]")
         
@@ -186,6 +200,8 @@ def create_dashboard():
         policy = CustomizablePolicy(min_battery_imaging=custom_min_battery)
     
     # Initial state
+    # Note: battery_energy_wh will be recalculated in _initialize_state() using effective capacity
+    # But we set it here for consistency
     initial_state = SatelliteState(
         battery_level_percent=float(init_battery),
         battery_energy_wh=float(init_battery) * float(battery_capacity) / 100.0,
@@ -212,12 +228,18 @@ def create_dashboard():
         st.rerun()
     
     if run_button:
+        # Clear any previous simulation to ensure fresh start with new parameters
+        st.session_state.simulation = None
+        st.session_state.history = []
+        
         with st.spinner("Executing simulation..."):
+            # Create new simulation with current parameter values from sliders
             sim = Simulation(config, initial_state, policy)
             history = sim.run(duration_orbits=duration_orbits)
             st.session_state.simulation = sim
             st.session_state.history = history
         st.success(f"Simulation complete. {len(history)} timesteps executed.")
+        st.info(f"**Configuration:** Solar={solar_power}W, Battery={battery_capacity}Wh, Base={base_load}W, Imaging={imaging_load}W")
     
     # Results display
     if st.session_state.history:
@@ -226,12 +248,38 @@ def create_dashboard():
         summary = sim.get_summary()
         compliance = summary.get('compliance', {})
         
-        # Compliance status
+        # Compliance status - UNSAFE MODE
         st.markdown("---")
-        if compliance.get('compliant', False):
-            st.success("20% SoC CONSTRAINT: SATISFIED - Battery maintained above minimum threshold")
+        min_soc = compliance.get('min_soc_reached', 100.0)
+        violations = compliance.get('soc_violations', 0)
+        
+        if min_soc < 20.0:
+            st.error(f"""
+            **CRITICALLY UNSAFE OPERATION** 
+            
+            **Battery dropped to {min_soc:.1f}% (below 20% minimum)**
+            - SOC Violations: {violations}
+            - Operations continued despite critical battery state
+            - **Mission is in danger of power failure**
+            """)
+        elif min_soc < 25.0:
+            st.warning(f"""
+             **LOW BATTERY WARNING** 
+            
+            **Battery reached {min_soc:.1f}% (near 20% minimum)**
+            - SOC Violations: {violations}
+            - Operations continued (no protection active)
+            - **Mission approaching critical state**
+            """)
         else:
-            st.error(f"20% SoC CONSTRAINT: VIOLATED - Minimum SoC reached: {compliance.get('min_soc_reached', 0):.1f}%")
+            st.info(f"""
+            **UNSAFE MODE ACTIVE**
+            
+            **Minimum SoC reached: {min_soc:.1f}%**
+            - SOC Violations: {violations}
+            - No protection mechanisms active
+            - Operations continue regardless of battery state
+            """)
         
         # Telemetry summary
         st.subheader("TELEMETRY SUMMARY")
@@ -494,23 +542,38 @@ def create_dashboard():
                 st.text(f"Downlink:   {downlink_speed} Mbps")
         
         with tab5:
-            st.subheader("20% SoC COMPLIANCE REPORT")
+            st.subheader("20% SoC COMPLIANCE REPORT - UNSAFE MODE")
+            
+            # UNSAFE MODE WARNING
+            st.error("""
+             **UNSAFE MODE ACTIVE - NO PROTECTION** 
+            
+            All failsafes are disabled. Operations continue regardless of battery state.
+            Violations are tracked but not prevented.
+            """)
             
             report = sim.get_compliance_report()
             
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("**Battery Compliance:**")
+                st.markdown("**Battery Compliance (TRACKING ONLY):**")
                 soc_comp = report.get('soc_compliance', {})
-                st.text(f"Requirement:    SoC >= 20%")
-                st.text(f"Minimum SoC:    {soc_comp.get('min_soc_reached', 0):.1f}%")
-                st.text(f"Violations:     {soc_comp.get('violations', 0)}")
+                min_soc = soc_comp.get('min_soc_reached', 0)
+                violations = soc_comp.get('violations', 0)
                 
-                if soc_comp.get('compliant', False):
-                    st.success("STATUS: COMPLIANT")
+                st.text(f"Requirement:    SoC >= 20%")
+                st.text(f"Minimum SoC:    {min_soc:.1f}%")
+                st.text(f"Violations:     {violations}")
+                
+                if min_soc < 20.0:
+                    st.error(f" CRITICAL: Battery dropped to {min_soc:.1f}% - Operations continued")
+                elif min_soc < 25.0:
+                    st.warning(f" WARNING: Battery reached {min_soc:.1f}% - Operations continued")
                 else:
-                    st.error("STATUS: NON-COMPLIANT")
+                    st.info(f"ℹ Minimum SoC: {min_soc:.1f}% - No protection active")
+                
+                st.markdown("**Status: UNSAFE MODE - No enforcement**")
             
             with col2:
                 st.markdown("**Load Profile [loads.md]:**")

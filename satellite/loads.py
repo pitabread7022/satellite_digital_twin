@@ -112,8 +112,50 @@ class LoadManager:
         self.config = config
         self.loads: Dict[str, Load] = {}
         
-        # Initialize with loads.md specification
-        loads_to_add = custom_loads if custom_loads else self.LOADS_MD_SPEC
+        # Initialize with loads from config (not hardcoded values)
+        if custom_loads:
+            loads_to_add = custom_loads
+        else:
+            # Create loads using config values (allows parameter changes to take effect)
+            loads_to_add = [
+                Load(
+                    name="Platform_Base",
+                    power_w=config.base_load_w,
+                    priority=LoadPriority.CRITICAL,
+                    is_active=True,  # Always on
+                    requires_sunlight=False,
+                    max_duration_per_orbit_min=0,  # Continuous
+                    description="Platform base load (ADCS, OBC, COMMS idle)"
+                ),
+                Load(
+                    name="Payload_Imaging",
+                    power_w=config.imaging_load_w,
+                    priority=LoadPriority.LOW,
+                    is_active=False,
+                    requires_sunlight=True,  # Imaging only in sunlight
+                    max_duration_per_orbit_min=config.imaging_duration_min,
+                    description=f"Payload imaging (+{config.imaging_load_w}W, sunlight only, {config.imaging_duration_min} min/orbit)"
+                ),
+                Load(
+                    name="Downlink_COMMS",
+                    power_w=config.downlink_load_w,
+                    priority=LoadPriority.MEDIUM,
+                    is_active=False,
+                    requires_sunlight=False,  # Can operate in eclipse
+                    max_duration_per_orbit_min=config.downlink_duration_min,
+                    description=f"High-rate downlink (+{config.downlink_load_w}W, {config.downlink_duration_min} min/orbit)"
+                ),
+                Load(
+                    name="ADCS_Dump",
+                    power_w=config.adcs_dump_load_w,
+                    priority=LoadPriority.HIGH,
+                    is_active=False,
+                    requires_sunlight=True,  # Momentum dump in sunlight
+                    max_duration_per_orbit_min=config.adcs_dump_duration_min,
+                    description=f"ADCS momentum dump (+{config.adcs_dump_load_w}W, sunlight, {config.adcs_dump_duration_min} min/orbit)"
+                ),
+            ]
+        
         for load in loads_to_add:
             self.add_load(load)
         
@@ -163,9 +205,9 @@ class LoadManager:
             if time_used >= load.max_duration_per_orbit_min:
                 return False, f"{name} reached {load.max_duration_per_orbit_min} min limit this orbit"
         
-        # Check battery level - prevent activation if it would violate 20% SoC
-        if not self._check_battery_safe(state, load.power_w):
-            return False, f"Battery too low to activate {name} (20% SoC protection)"
+        # DISABLED: Battery safety check (UNSAFE MODE - DEFAULT)
+        # if not self._check_battery_safe(state, load.power_w):
+        #     return False, f"Battery too low to activate {name} (20% SoC protection)"
         
         return True, "OK"
     
@@ -174,26 +216,41 @@ class LoadManager:
         Check if adding load is safe for 20% SoC compliance.
         
         Conservative check: ensure we can survive worst-case eclipse
-        with the additional load.
+        with the additional load. Uses effective battery capacity.
         """
+        # Get effective battery capacity (reduced by health)
+        effective_capacity_wh = self.config.battery_capacity_wh * (state.battery_health_percent / 100.0)
+        
         # If in sunlight with positive net power, generally safe
-        current_net = state.solar_generation_w - state.total_load_w
-        new_net = current_net - additional_load_w
+        # But need to account for solar generation properly
+        # Estimate solar generation (60W if in sunlight, 0 if not)
+        estimated_solar = self.config.solar_panel_power_w if state.in_sunlight else 0.0
+        current_net = estimated_solar - state.total_load_w
+        new_net = estimated_solar - (state.total_load_w + additional_load_w)
         
         if state.in_sunlight and new_net >= 0:
+            # Positive net power - will charge battery
             return True
         
         # Calculate energy needed to survive eclipse at new load level
         eclipse_duration_h = self.config.eclipse_duration_min / 60.0
-        total_load_in_eclipse = self.config.base_load_w + additional_load_w
+        total_load_in_eclipse = state.total_load_w + additional_load_w
         
-        # Energy needed for eclipse (with safety margin)
+        # Check discharge rate limit
+        voltage_factor = state.battery_voltage_v / 12.6 if state.battery_voltage_v > 0 else 0.8
+        max_discharge = self.config.max_discharge_rate_w * voltage_factor
+        
+        if total_load_in_eclipse > max_discharge:
+            # Can't supply load due to rate limit
+            return False
+        
+        # Energy needed for eclipse (with discharge efficiency)
         energy_needed_wh = (total_load_in_eclipse * eclipse_duration_h 
                            / self.config.discharge_efficiency)
         
-        # Available energy above 20% minimum
-        min_energy_wh = self.config.battery_capacity_wh * (self.config.min_soc_percent / 100.0)
-        safety_margin_wh = self.config.battery_capacity_wh * (self.config.soc_safety_margin_percent / 100.0)
+        # Available energy above 20% minimum (using effective capacity)
+        min_energy_wh = effective_capacity_wh * (self.config.min_soc_percent / 100.0)
+        safety_margin_wh = effective_capacity_wh * (self.config.soc_safety_margin_percent / 100.0)
         available_energy_wh = state.battery_energy_wh - min_energy_wh - safety_margin_wh
         
         return available_energy_wh >= energy_needed_wh
@@ -258,8 +315,8 @@ class LoadManager:
         # Enforce per-orbit time limits
         self._enforce_time_limits(state)
         
-        # CRITICAL: Load shedding to protect 20% SoC
-        self._enforce_soc_protection(state)
+        # DISABLED: Load shedding to protect 20% SoC (UNSAFE MODE - DEFAULT)
+        # self._enforce_soc_protection(state)  # Failsafe disabled - mission is critically unsafe
         
         # Update time tracking for active loads
         self._update_time_tracking(state, timestep_min)
@@ -315,41 +372,13 @@ class LoadManager:
     
     def _enforce_soc_protection(self, state: SatelliteState) -> None:
         """
-        CRITICAL: Automatic load shedding to maintain 20% SoC minimum.
+        DISABLED: Automatic load shedding to maintain 20% SoC minimum.
         
-        Load shedding priority (lowest priority shed first):
-        1. Imaging (LOW) - first to shed
-        2. Downlink (MEDIUM) - second to shed  
-        3. ADCS dump (HIGH) - third to shed
-        4. Base load (CRITICAL) - never shed
+        This failsafe has been disabled - mission operates in critically unsafe mode.
+        Loads will continue operating even when battery is critically low.
         """
-        warning_threshold = self.config.min_soc_percent + self.config.soc_safety_margin_percent
-        
-        if state.battery_level_percent <= warning_threshold:
-            state.load_shed_active = True
-            
-            # Calculate if we're draining battery
-            net_power = state.solar_generation_w - state.total_load_w
-            
-            if net_power < 0:  # Draining battery
-                # Shed loads in priority order until positive or base only
-                
-                # 1. First shed imaging (priority LOW)
-                if self.loads["Payload_Imaging"].is_active:
-                    self.loads["Payload_Imaging"].is_active = False
-                    return
-                
-                # 2. Then shed downlink (priority MEDIUM)  
-                if self.loads["Downlink_COMMS"].is_active:
-                    self.loads["Downlink_COMMS"].is_active = False
-                    return
-                
-                # 3. Finally shed ADCS dump (priority HIGH)
-                if self.loads["ADCS_Dump"].is_active:
-                    self.loads["ADCS_Dump"].is_active = False
-                    return
-        else:
-            state.load_shed_active = False
+        # Failsafe disabled - always allow loads to operate
+        state.load_shed_active = False
     
     def _update_time_tracking(self, state: SatelliteState, timestep_min: float) -> None:
         """Update per-orbit time tracking for each load."""
