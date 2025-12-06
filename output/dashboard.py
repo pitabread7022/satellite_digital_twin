@@ -92,19 +92,19 @@ def create_dashboard():
         # Load Budget
         with st.expander("Power Budget", expanded=True):
             st.markdown("**Load Profile:**")
-            base_load = st.slider("Base Load [W]", 10, 25, 15)
-            imaging_load = st.slider("Imaging Load [+W]", 30, 50, 40)
-            downlink_load = st.slider("Downlink Load [+W]", 20, 40, 30)
-            adcs_dump_load = st.slider("ADCS Dump Load [+W]", 5, 15, 10)
+            base_load = st.slider("Base Load [W]", 10, 100, 15)
+            imaging_load = st.slider("Imaging Load [+W]", 30, 100, 40)
+            downlink_load = st.slider("Downlink Load [+W]", 20, 100, 30)
+            adcs_dump_load = st.slider("ADCS Dump Load [+W]", 5, 100, 10)
             
             st.markdown("**Operations Timing [per orbit]:**")
-            imaging_duration = st.slider("Imaging Duration [min]", 5, 15, 10)
-            downlink_duration = st.slider("Downlink Duration [min]", 5, 12, 8)
-            adcs_dump_duration = st.slider("ADCS Dump Duration [min]", 3, 8, 5)
+            imaging_duration = st.slider("Imaging Duration [min]", 5, 60, 10)
+            downlink_duration = st.slider("Downlink Duration [min]", 5, 60, 8)
+            adcs_dump_duration = st.slider("ADCS Dump Duration [min]", 3, 30, 5)
         
         # Data Budget
         with st.expander("Data Budget", expanded=False):
-            data_per_orbit = st.slider("Data Generation [Gbit/orbit]", 1.0, 4.0, 2.0, 0.5)
+            data_per_orbit = st.slider("Data Generation [Gbit/orbit]", 1.0, 40.0, 2.0, 0.5)
             downlink_speed = st.slider("Downlink Rate [Mbps]", 20, 100, 50)
             max_storage = st.slider("Storage Capacity [GB]", 50, 500, 100)
             
@@ -139,7 +139,7 @@ def create_dashboard():
         
         # Simulation
         with st.expander("Simulation Parameters", expanded=True):
-            timestep = st.slider("Timestep [min]", 0.5, 5.0, 1.0, 0.5)
+            timestep = st.slider("Timestep [min]", 0.1, 15.0, 1.0, 0.1)
             duration_orbits = st.slider("Duration [orbits]", 1, 20, 5)
         
         # Initial State
